@@ -5,7 +5,7 @@
 // It exposes a single endpoint to send outbound voice calls with text-to-speech.
 //
 // How to Run:
-// 1. Install dependencies: npm install express axios dotenv
+// 1. Install dependencies: npm install express axios dotenv cors
 // 2. Create a .env file in the same directory with the variables below.
 // 3. Run the server: node server.js
 //
@@ -26,11 +26,16 @@
 // --- Dependencies ---
 const express = require('express');
 const axios = require('axios');
+const cors = require('cors'); // Import the CORS package
 require('dotenv').config();
 
 // --- Express App Initialization ---
 const app = express();
 app.use(express.json()); // Middleware to parse JSON bodies
+
+// --- CORS Middleware ---
+// This is the fix. It allows your web app (on a different domain) to make requests to this API.
+app.use(cors());
 
 const PORT = process.env.PORT || 3000;
 
