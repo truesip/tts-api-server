@@ -1,62 +1,111 @@
-TTS Voice API - Full DocumentationWelcome to the TTS Voice API! This service allows you to programmatically send outbound voice calls with text-to-speech and check the delivery status of those calls.The API acts as a secure wrapper around the Infobip backend, protecting your primary API keys.Base URLAll API endpoints are relative to your production server's base URL:https://api.sespcl.com/api/v1AuthenticationAll endpoints are protected by an API key. You must include your assigned key in the x-api-key header with every request.Required HeadersHeaderDescriptionx-api-keyRequired. Your private API key.Content-TypeRequired. Must be application/json for POST requests.Endpoints1. Send TTS CallThis endpoint initiates a new text-to-speech voice call to a specified recipient.Endpoint: /call/ttsMethod: POSTRequest BodyParameterTypeDescriptionRequiredtoStringRequired. The recipient's phone number in E.164 format (e.g., +15053753840).YestextStringRequired. The text message to be converted to speech.YesfromStringOptional. The caller ID to be displayed, in E.164 format. If not provided, the system's default caller ID will be used.NolanguageStringOptional. The language of the text. Defaults to en (English).NospeechRateNumberOptional. The speed of the speech. 1 is normal speed. Defaults to 1.NoExample Request (curl)curl -X POST \
-  https://api.sespcl.com/api/v1/call/tts \
-  -H 'x-api-key: YOUR_API_KEY' \
+Custom Text-to-Speech (TTS) Voice API Server
+
+This repository contains the source code for a self-hosted API that acts as a wrapper around the Infobip Voice API. It provides a simple, protected endpoint to initiate outbound PSTN (Public Switched Telephone Network) calls with text-to-speech functionality.
+Use Cases
+
+This API is ideal for developers and businesses looking to integrate automated voice notifications into their applications without exposing their core Infobip API keys on the client-side.
+
+    Automated Alerts: Send voice call alerts for critical system events, server outages, or important notifications.
+
+    Two-Factor Authentication (2FA): Deliver one-time passcodes via a voice call as an alternative to SMS.
+
+    Appointment Reminders: Automatically call customers to remind them of upcoming appointments or reservations.
+
+    Order Status Updates: Notify customers via a voice call when their order has been shipped, is out for delivery, or has been delivered.
+
+    Marketing Campaigns: Send promotional messages or special offers to a list of customers via automated voice calls.
+
+By using this wrapper, you create a secure and simplified interface for your applications to trigger these calls.
+Getting Started: Installation & Deployment
+
+Follow these instructions to deploy the API server from this GitHub repository to your own cloud server (e.g., AWS, DigitalOcean, Linode, etc.).
+Prerequisites
+
+Before you begin, ensure you have the following installed on your server:
+
+    Node.js (version 14.x or newer)
+
+    npm (Node Package Manager)
+
+    Git
+
+1. Clone the Repository
+
+Connect to your server via SSH and clone this repository.
+
+# Navigate to your desired project directory
+cd /var/www
+
+# Clone the repository
+git clone https://github.com/your-username/your-repo-name.git
+
+# Enter the new project directory
+cd your-repo-name
+
+2. Install Dependencies
+
+Install the required Node.js packages listed in package.json.
+
+npm install
+
+3. Configure Environment Variables
+
+Create a .env file in the root of the project to store your secret keys and configuration. This file should never be committed to Git.
+
+# Create the .env file
+nano .env
+
+Add the following variables to the file, replacing the placeholder values with your actual credentials.
+
+# Your secret key to protect your new API endpoint
+MY_API_KEY=your-super-secret-api-key
+
+# Your Infobip Account Details (e.g., xyz123.api.infobip.com)
+INFOBIP_BASE_URL=your.api.infobip.com
+
+# Your Infobip API Key
+INFOBIP_API_KEY=your-infobip-api-key
+
+# The default caller ID (a voice number you have with Infobip)
+DEFAULT_CALLER_ID=447418369169
+
+4. Run the Application with a Process Manager
+
+To ensure your API runs continuously and restarts automatically if it crashes or the server reboots, use a process manager like PM2.
+
+# Install PM2 globally on your server
+npm install pm2 -g
+
+# Start the API server with PM2
+pm2 start server.js --name "tts-api-server"
+
+# (Optional but Recommended) Save the PM2 process list to restart on server reboot
+pm2 save
+
+Your API is now live and running! You can monitor it using the command pm2 status.
+API Documentation
+
+This server exposes a single endpoint for initiating calls. For full details on the request body, parameters, and example responses, please refer to the complete API Documentation. (You can link to the custom_api_documentation artifact or a hosted version of it).
+Quick Reference
+
+    Method: POST
+
+    Endpoint: /api/v1/call/tts
+
+    Auth: Requires x-api-key in the header.
+
+Example Request (cURL)
+
+curl -X POST \
+  http://your-server-address:3000/api/v1/call/tts \
+  -H 'x-api-key: your-super-secret-api-key' \
   -H 'Content-Type: application/json' \
   -d '{
-    "to": "+15053753840",
-    "text": "Hello, this is a test call from the API.",
-    "from": "+15053761293"
+    "from": "447418369170",
+    "to": "442071234567",
+    "text": "This is a test call from our API platform!"
   }'
-Success Response (200 OK)A successful request returns a bulkId which is the unique identifier for this call request.{
-    "message": "Call initiated successfully.",
-    "tracking": {
-        "bulkId": "2034072219640523072",
-        "messages": [
-            // ... message details
-        ]
-    }
-}
-2. Get Call StatusThis endpoint retrieves the delivery status report for a previously initiated call.Endpoint: /call/status/:bulkIdMethod: GETURL Parameter:bulkId: Required. The unique ID that was returned when the call was first created.Example Request (curl)curl -X GET \
-  https://api.sespcl.com/api/v1/call/status/2034072219640523072 \
-  -H 'x-api-key: YOUR_API_KEY'
-Success Response (200 OK)The response contains an array of results. The status object gives the most recent delivery information for the call.{
-    "results": [
-        {
-            "bulkId": "2034072219640523072",
-            "messageId": "2034072219640523073",
-            "to": "15053753840",
-            "sentAt": "2025-06-13T20:30:00.123Z",
-            "doneAt": "2025-06-13T20:30:15.456Z",
-            "messageCount": 1,
-            "price": {
-                "pricePerMessage": 0.005,
-                "currency": "USD"
-            },
-            "status": {
-                "groupId": 3,
-                "groupName": "DELIVERED",
-                "id": 5,
-                "name": "DELIVERED_TO_HANDSET",
-                "description": "Message delivered to handset"
-            },
-            "error": {
-                "groupId": 0,
-                "groupName": "OK",
-                "id": 0,
-                "name": "NO_ERROR",
-                "description": "No Error",
-                "permanent": false
-            }
-        }
-    ]
-}
-Common Status GroupsPENDING: The call is still being processed.DELIVERED: The call was answered.UNDELIVERABLE: The call could not be completed (e.g., invalid number).REJECTED: The recipient rejected the call.EXPIRED: The call was not answered within the timeout period.Error ResponsesIf a request fails, the API will return an appropriate error code and a JSON body with details.401 Unauthorized{
-    "error": "Unauthorized. Invalid or missing API Key."
-}
-400 Bad Request{
-    "error": "Missing required fields: `to` and `text` are required."
-}
-5xx Server Error{
-    "error": "Failed to initiate call via backend service.",
-    "details": "An error occurred with the backend voice service."
-}
+
+Contributing
+
+Contributions are welcome! If you have suggestions for improvements or find any issues, please feel free to open an issue or submit a pull reque
