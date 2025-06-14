@@ -2,6 +2,7 @@
 // Custom Text-to-Speech (TTS) Voice API Server (Production Ready)
 // ---------------------------------------------
 // This version logs all API requests to a PostgreSQL database.
+// Version 2.1: Added stricter startup checks and improved IP logging.
 //
 
 // --- Dependencies ---
@@ -52,7 +53,7 @@ const logRequestToDb = async (req, statusCode, message) => {
     `;
     const values = [
         new Date(),
-        req.ip,
+        req.ip, // req.ip is now more reliable due to 'trust proxy'
         req.method,
         req.originalUrl,
         statusCode,
@@ -71,6 +72,11 @@ const logRequestToDb = async (req, statusCode, message) => {
 const app = express();
 app.use(express.json());
 app.use(cors());
+
+// IMPROVEMENT: Trust the proxy to get the real client IP address for logging.
+// This is important when deployed on platforms like DigitalOcean App Platform.
+app.set('trust proxy', true);
+
 
 const PORT = process.env.PORT || 3000;
 
@@ -158,7 +164,8 @@ const startServer = async () => {
 
     app.listen(PORT, () => {
         console.log(`TTS API Server is running in production mode on port ${PORT}`);
-        if (!process.env.MY_API_KEY || !process.env.INFOBIP_BASE_URL || !process.env.INFOBIP_API_KEY || !process.env.DATABASE_URL) {
+        // IMPROVEMENT: Added DEFAULT_CALLER_ID to the critical environment variable check.
+        if (!process.env.MY_API_KEY || !process.env.INFOBIP_BASE_URL || !process.env.INFOBIP_API_KEY || !process.env.DATABASE_URL || !process.env.DEFAULT_CALLER_ID) {
             console.error('[FATAL] A CRITICAL ENVIRONMENT VARIABLE IS MISSING. Shutting down.');
             process.exit(1);
         }
