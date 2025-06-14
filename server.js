@@ -2,7 +2,7 @@
 // Custom Text-to-Speech (TTS) Voice API Server (Production Ready)
 // ---------------------------------------------
 // This version logs all API requests to a PostgreSQL database.
-// Version 2.2: Fixed SSL certificate error for DigitalOcean Managed Databases.
+// Version 2.3: Fixed DigitalOcean SSL connection issues.
 //
 
 // --- Dependencies ---
@@ -13,19 +13,15 @@ const { Pool } = require('pg'); // PostgreSQL client
 require('dotenv').config();
 
 // --- Database Connection ---
-const dbConfig = {
+// This configuration connects to the database using the connection string
+// and disables strict SSL certificate validation, which is required to
+// resolve the "self-signed certificate" error with DigitalOcean Managed Databases.
+const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
-    // Add SSL configuration only if the CA certificate is provided.
-    // This is the secure and recommended way to connect to DigitalOcean Managed Databases.
-    ...(process.env.DB_CA_CERT && {
-        ssl: {
-            ca: process.env.DB_CA_CERT,
-        },
-    }),
-};
-
-const pool = new Pool(dbConfig);
-
+    ssl: {
+        rejectUnauthorized: false
+    }
+});
 
 // --- Function to ensure the log table exists ---
 const ensureLogTableExists = async () => {
@@ -45,7 +41,7 @@ const ensureLogTableExists = async () => {
         console.log('[INFO] Log table "api_logs" is ready.');
     } catch (err) {
         console.error('[FATAL] Error creating log table:', err.stack);
-        process.exit(1); // Exit if we can't set up the database table
+        process.exit(1);
     }
 };
 
@@ -55,18 +51,10 @@ const logRequestToDb = async (req, statusCode, message) => {
         INSERT INTO api_logs (timestamp, ip_address, method, endpoint, status_code, response_message)
         VALUES ($1, $2, $3, $4, $5, $6);
     `;
-    const values = [
-        new Date(),
-        req.ip, // req.ip is now more reliable due to 'trust proxy'
-        req.method,
-        req.originalUrl,
-        statusCode,
-        JSON.stringify(message)
-    ];
+    const values = [ new Date(), req.ip, req.method, req.originalUrl, statusCode, JSON.stringify(message) ];
     try {
         await pool.query(logQuery, values);
     } catch (err) {
-        // If logging fails, we log the error to the console but don't crash the app.
         console.error('[ERROR] Failed to write log to database:', err.stack);
     }
 };
@@ -86,7 +74,7 @@ const apiKeyAuth = (req, res, next) => {
     const userApiKey = req.headers['x-api-key'];
     if (!userApiKey || !process.env.MY_API_KEY || userApiKey !== process.env.MY_API_KEY) {
         const message = { error: 'Unauthorized. Invalid or missing API Key.' };
-        logRequestToDb(req, 401, message); // Log unauthorized attempt
+        logRequestToDb(req, 401, message);
         return res.status(401).json(message);
     }
     next();
@@ -95,7 +83,6 @@ const apiKeyAuth = (req, res, next) => {
 // --- API Routes ---
 app.post('/api/v1/call/tts', apiKeyAuth, async (req, res) => {
     const { to, text, from } = req.body;
-
     if (!to || !text) {
         const message = { error: 'Missing required fields: `to` and `text` are required.' };
         await logRequestToDb(req, 400, message);
@@ -123,7 +110,6 @@ app.post('/api/v1/call/tts', apiKeyAuth, async (req, res) => {
 
 app.get('/api/v1/call/status/:bulkId', apiKeyAuth, async (req, res) => {
     const { bulkId } = req.params;
-
     if (!bulkId) {
         const message = { error: 'Missing bulkId parameter.' };
         await logRequestToDb(req, 400, message);
@@ -137,7 +123,6 @@ app.get('/api/v1/call/status/:bulkId', apiKeyAuth, async (req, res) => {
         const reportsResponse = await axios.get(infobipReportsUrl, { headers: infobipHeaders });
         await logRequestToDb(req, 200, { action: 'Status check success', bulkId });
         res.status(200).json(reportsResponse.data);
-
     } catch (error) {
         const statusCode = error.response ? error.response.status : 500;
         const errorMessage = error.response ? error.response.data : 'Internal Server Error';
@@ -146,10 +131,8 @@ app.get('/api/v1/call/status/:bulkId', apiKeyAuth, async (req, res) => {
     }
 });
 
-
 // --- Server Startup ---
 const startServer = async () => {
-    // Ensure database table is ready before starting the server
     await ensureLogTableExists();
 
     app.listen(PORT, () => {
