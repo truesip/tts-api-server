@@ -2,7 +2,7 @@
 // Custom Text-to-Speech (TTS) Voice API Server (Production Ready)
 // ---------------------------------------------
 // This version logs all API requests to a PostgreSQL database.
-// Version 2.1: Added stricter startup checks and improved IP logging.
+// Version 2.2: Fixed SSL certificate error for DigitalOcean Managed Databases.
 //
 
 // --- Dependencies ---
@@ -13,15 +13,19 @@ const { Pool } = require('pg'); // PostgreSQL client
 require('dotenv').config();
 
 // --- Database Connection ---
-// The connection string is read from the DATABASE_URL environment variable.
-// DigitalOcean Managed Databases require SSL. The pg library handles this
-// automatically when the connection string includes ?sslmode=require.
-const pool = new Pool({
+const dbConfig = {
     connectionString: process.env.DATABASE_URL,
-    ssl: {
-        rejectUnauthorized: false // Required for DigitalOcean Managed Databases
-    }
-});
+    // Add SSL configuration only if the CA certificate is provided.
+    // This is the secure and recommended way to connect to DigitalOcean Managed Databases.
+    ...(process.env.DB_CA_CERT && {
+        ssl: {
+            ca: process.env.DB_CA_CERT,
+        },
+    }),
+};
+
+const pool = new Pool(dbConfig);
+
 
 // --- Function to ensure the log table exists ---
 const ensureLogTableExists = async () => {
@@ -72,9 +76,6 @@ const logRequestToDb = async (req, statusCode, message) => {
 const app = express();
 app.use(express.json());
 app.use(cors());
-
-// IMPROVEMENT: Trust the proxy to get the real client IP address for logging.
-// This is important when deployed on platforms like DigitalOcean App Platform.
 app.set('trust proxy', true);
 
 
@@ -92,12 +93,6 @@ const apiKeyAuth = (req, res, next) => {
 };
 
 // --- API Routes ---
-
-/**
- * @route   POST /api/v1/call/tts
- * @desc    Initiates a Text-to-Speech (TTS) voice call.
- * @access  Private (Requires API Key)
- */
 app.post('/api/v1/call/tts', apiKeyAuth, async (req, res) => {
     const { to, text, from } = req.body;
 
@@ -126,11 +121,6 @@ app.post('/api/v1/call/tts', apiKeyAuth, async (req, res) => {
     }
 });
 
-/**
- * @route   GET /api/v1/call/status/:bulkId
- * @desc    Gets the delivery status report for a call bulk.
- * @access  Private (Requires API Key)
- */
 app.get('/api/v1/call/status/:bulkId', apiKeyAuth, async (req, res) => {
     const { bulkId } = req.params;
 
@@ -164,7 +154,6 @@ const startServer = async () => {
 
     app.listen(PORT, () => {
         console.log(`TTS API Server is running in production mode on port ${PORT}`);
-        // IMPROVEMENT: Added DEFAULT_CALLER_ID to the critical environment variable check.
         if (!process.env.MY_API_KEY || !process.env.INFOBIP_BASE_URL || !process.env.INFOBIP_API_KEY || !process.env.DATABASE_URL || !process.env.DEFAULT_CALLER_ID) {
             console.error('[FATAL] A CRITICAL ENVIRONMENT VARIABLE IS MISSING. Shutting down.');
             process.exit(1);
