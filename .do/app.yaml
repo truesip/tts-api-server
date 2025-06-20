@@ -91,6 +91,28 @@ services:
         type: SECRET
       - key: WAVIX_BASE_URL
         value: "https://api.wavix.com/v1"
+      - key: PLIVO_AUTH_ID
+        type: SECRET
+      - key: PLIVO_AUTH_TOKEN
+        type: SECRET
+      - key: SINCH_APPLICATION_KEY
+        type: SECRET
+      - key: SINCH_APPLICATION_SECRET
+        type: SECRET
+      - key: TELNYX_API_KEY
+        type: SECRET
+      - key: TELNYX_CONNECTION_ID
+        type: SECRET
+      - key: TELNYX_WEBHOOK_URL
+        value: "https://your-app.com/webhook/telnyx"
+      - key: ENABLEX_APP_ID
+        type: SECRET
+      - key: ENABLEX_APP_KEY
+        type: SECRET
+      - key: ENABLEX_WEBHOOK_URL
+        value: "https://your-app.com/webhook/enablex"
+      - key: ENABLEX_ANSWER_URL
+        value: "https://your-app.com/answer/enablex"
       
       # Optional Features
       - key: PERSPECTIVE_API_KEY

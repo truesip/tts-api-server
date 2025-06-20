@@ -61,7 +61,7 @@ const requiredEnvVars = ['MY_API_KEY', 'DEFAULT_CALLER_ID'];
 // Check which provider to use: VoIP Service, SIP, or Infobip
 const useVoIP = process.env.USE_VOIP === 'true';
 const useSip = process.env.USE_SIP === 'true';
-const voipProvider = process.env.VOIP_PROVIDER || 'twilio'; // twilio, vonage, aws, wavix
+const voipProvider = process.env.VOIP_PROVIDER || 'twilio'; // twilio, vonage, aws, wavix, plivo, sinch, telnyx, enablex
 
 if (useVoIP) {
     // VoIP service configuration
@@ -73,6 +73,14 @@ if (useVoIP) {
         requiredEnvVars.push('AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_CONNECT_INSTANCE_ID');
     } else if (voipProvider === 'wavix') {
         requiredEnvVars.push('WAVIX_API_KEY');
+    } else if (voipProvider === 'plivo') {
+        requiredEnvVars.push('PLIVO_AUTH_ID', 'PLIVO_AUTH_TOKEN');
+    } else if (voipProvider === 'sinch') {
+        requiredEnvVars.push('SINCH_APPLICATION_KEY', 'SINCH_APPLICATION_SECRET');
+    } else if (voipProvider === 'telnyx') {
+        requiredEnvVars.push('TELNYX_API_KEY', 'TELNYX_CONNECTION_ID');
+    } else if (voipProvider === 'enablex') {
+        requiredEnvVars.push('ENABLEX_APP_ID', 'ENABLEX_APP_KEY');
     }
 } else if (useSip) {
     const sipRequiredVars = ['SIP_PROXY_HOST', 'SIP_USERNAME', 'SIP_PASSWORD', 'SIP_DOMAIN'];
@@ -1229,6 +1237,751 @@ class WavixClient {
     }
 }
 
+class PlivoClient {
+    constructor() {
+        this.authId = process.env.PLIVO_AUTH_ID;
+        this.authToken = process.env.PLIVO_AUTH_TOKEN;
+        this.baseUrl = 'https://api.plivo.com/v1/Account';
+        this.activeCalls = new Map();
+    }
+
+    async makeCall(to, from, audioContent, options = {}) {
+        try {
+            logger.info({ to, from, provider: 'Plivo' }, 'Initiating Plivo call');
+
+            const auth = Buffer.from(`${this.authId}:${this.authToken}`).toString('base64');
+            
+            let callData = {
+                to: to,
+                from: from,
+                answer_method: 'GET'
+            };
+
+            if (options.isText) {
+                // Text-to-Speech call - Use Plivo's speak element
+                const speakXml = `<?xml version="1.0" encoding="UTF-8"?>
+                <Response>
+                    <Speak voice="${options.voice || 'WOMAN'}" language="${options.language || 'en-US'}">${audioContent}</Speak>
+                </Response>`;
+                
+                // Create a temporary answer URL or use inline XML
+                callData.answer_url = `data:application/xml;base64,${Buffer.from(speakXml).toString('base64')}`;
+            } else {
+                // Audio file call - Use Plivo's play element
+                const playXml = `<?xml version="1.0" encoding="UTF-8"?>
+                <Response>
+                    <Play>${audioContent}</Play>
+                </Response>`;
+                
+                callData.answer_url = `data:application/xml;base64,${Buffer.from(playXml).toString('base64')}`;
+            }
+
+            // Add transfer logic if specified
+            if (options.transferTo && options.dtmfDigit) {
+                const transferXml = `<?xml version="1.0" encoding="UTF-8"?>
+                <Response>
+                    <Speak>Press ${options.dtmfDigit} to be transferred</Speak>
+                    <GetDigits action="/plivo/transfer/${options.transferTo}" method="POST" numDigits="1">
+                        <Speak>Enter your choice</Speak>
+                    </GetDigits>
+                    <Speak>Thank you for calling</Speak>
+                </Response>`;
+                
+                callData.answer_url = `data:application/xml;base64,${Buffer.from(transferXml).toString('base64')}`;
+            }
+
+            const response = await axios.post(
+                `${this.baseUrl}/${this.authId}/Call/`,
+                callData,
+                {
+                    headers: {
+                        'Authorization': `Basic ${auth}`,
+                        'Content-Type': 'application/json'
+                    },
+                    timeout: 10000
+                }
+            );
+
+            const callUuid = response.data.request_uuid;
+            
+            this.activeCalls.set(callUuid, {
+                to,
+                from,
+                status: 'INITIATED',
+                startTime: new Date(),
+                audioContent,
+                options
+            });
+
+            logger.info({ callUuid, to }, 'Plivo call initiated successfully');
+
+            return {
+                success: true,
+                callId: callUuid,
+                status: 'INITIATED',
+                tracking: {
+                    bulkId: callUuid,
+                    messageId: callUuid,
+                    to,
+                    from,
+                    timestamp: new Date().toISOString()
+                }
+            };
+
+        } catch (error) {
+            logger.error({ error: error.message }, 'Plivo call failed');
+            throw new Error(`Plivo call failed: ${error.message}`);
+        }
+    }
+
+    async getCallStatus(callUuid) {
+        try {
+            const auth = Buffer.from(`${this.authId}:${this.authToken}`).toString('base64');
+            
+            const response = await axios.get(
+                `${this.baseUrl}/${this.authId}/Call/${callUuid}/`,
+                {
+                    headers: {
+                        'Authorization': `Basic ${auth}`
+                    },
+                    timeout: 5000
+                }
+            );
+
+            return {
+                callId: callUuid,
+                status: response.data.call_status,
+                duration: response.data.duration,
+                startTime: response.data.start_time,
+                endTime: response.data.end_time,
+                totalCost: response.data.total_cost
+            };
+
+        } catch (error) {
+            return { error: 'Call not found or error retrieving status' };
+        }
+    }
+}
+
+class SinchClient {
+    constructor() {
+        this.applicationKey = process.env.SINCH_APPLICATION_KEY;
+        this.applicationSecret = process.env.SINCH_APPLICATION_SECRET;
+        this.baseUrl = 'https://calling.api.sinch.com/calling/v1';
+        this.activeCalls = new Map();
+    }
+
+    async makeCall(to, from, audioContent, options = {}) {
+        try {
+            logger.info({ to, from, provider: 'Sinch' }, 'Initiating Sinch call');
+
+            // Generate timestamp and authorization
+            const timestamp = new Date().toISOString();
+            const auth = this.generateAuth('POST', '/calling/v1/callouts', '', timestamp);
+
+            let callData;
+            if (options.isText) {
+                // Text-to-Speech call using Sinch SVAML
+                callData = {
+                    method: 'ttsCallout',
+                    ttsCallout: {
+                        cli: from,
+                        destination: {
+                            type: 'number',
+                            endpoint: to
+                        },
+                        text: audioContent,
+                        locale: options.locale || 'en-US',
+                        prompts: options.voice || '#male1'
+                    }
+                };
+            } else {
+                // Audio file call using custom callback
+                callData = {
+                    method: 'customCallout',
+                    customCallout: {
+                        cli: from,
+                        destination: {
+                            type: 'number',
+                            endpoint: to
+                        },
+                        custom: `data:application/json;base64,${Buffer.from(JSON.stringify({
+                            instructions: [{
+                                name: 'playFiles',
+                                files: [{ id: audioContent }]
+                            }]
+                        })).toString('base64')}`
+                    }
+                };
+            }
+
+            // Add IVR logic if specified
+            if (options.transferTo && options.dtmfDigit) {
+                if (options.isText) {
+                    callData.ttsCallout.custom = `data:application/json;base64,${Buffer.from(JSON.stringify({
+                        instructions: [
+                            {
+                                name: 'say',
+                                text: audioContent,
+                                locale: options.locale || 'en-US'
+                            },
+                            {
+                                name: 'runMenu',
+                                barge: true,
+                                menus: [{
+                                    id: 'main',
+                                    mainPrompt: '#tts[Press ' + options.dtmfDigit + ' to be transferred]',
+                                    options: [{
+                                        dtmf: options.dtmfDigit,
+                                        action: 'connectPstn',
+                                        number: options.transferTo
+                                    }]
+                                }]
+                            }
+                        ]
+                    })).toString('base64')}`;
+                }
+            }
+
+            const response = await axios.post(
+                `${this.baseUrl}/callouts`,
+                callData,
+                {
+                    headers: {
+                        'Authorization': auth,
+                        'Content-Type': 'application/json',
+                        'X-Timestamp': timestamp
+                    },
+                    timeout: 10000
+                }
+            );
+
+            const callId = response.data.callId;
+            
+            this.activeCalls.set(callId, {
+                to,
+                from,
+                status: 'INITIATED',
+                startTime: new Date(),
+                audioContent,
+                options
+            });
+
+            logger.info({ callId, to }, 'Sinch call initiated successfully');
+
+            return {
+                success: true,
+                callId,
+                status: 'INITIATED',
+                tracking: {
+                    bulkId: callId,
+                    messageId: callId,
+                    to,
+                    from,
+                    timestamp: new Date().toISOString()
+                }
+            };
+
+        } catch (error) {
+            logger.error({ error: error.message }, 'Sinch call failed');
+            throw new Error(`Sinch call failed: ${error.message}`);
+        }
+    }
+
+    generateAuth(method, path, body, timestamp) {
+        const crypto = require('crypto');
+        
+        // Create content hash
+        const contentHash = crypto.createHash('md5').update(body).digest('base64');
+        
+        // Create string to sign
+        const stringToSign = `${method}\n${contentHash}\napplication/json\nx-timestamp:${timestamp}\n${path}`;
+        
+        // Create signature
+        const signature = crypto.createHmac('sha256', Buffer.from(this.applicationSecret, 'base64'))
+            .update(stringToSign, 'utf8')
+            .digest('base64');
+        
+        return `Application ${this.applicationKey}:${signature}`;
+    }
+
+    async getCallStatus(callId) {
+        try {
+            const timestamp = new Date().toISOString();
+            const auth = this.generateAuth('GET', `/calling/v1/calls/id/${callId}`, '', timestamp);
+            
+            const response = await axios.get(
+                `${this.baseUrl}/calls/id/${callId}`,
+                {
+                    headers: {
+                        'Authorization': auth,
+                        'X-Timestamp': timestamp
+                    },
+                    timeout: 5000
+                }
+            );
+
+            return {
+                callId,
+                status: response.data.status,
+                duration: response.data.duration,
+                startTime: response.data.createTime,
+                endTime: response.data.endTime,
+                result: response.data.result
+            };
+
+        } catch (error) {
+            return { error: 'Call not found or error retrieving status' };
+        }
+    }
+}
+
+class TelnyxClient {
+    constructor() {
+        this.apiKey = process.env.TELNYX_API_KEY;
+        this.baseUrl = 'https://api.telnyx.com/v2';
+        this.activeCalls = new Map();
+    }
+
+    async makeCall(to, from, audioContent, options = {}) {
+        try {
+            logger.info({ to, from, provider: 'Telnyx' }, 'Initiating Telnyx call');
+
+            let callData = {
+                to: to,
+                from: from,
+                connection_id: process.env.TELNYX_CONNECTION_ID,
+                webhook_url: process.env.TELNYX_WEBHOOK_URL || 'https://your-app.com/webhook/telnyx',
+                webhook_url_method: 'POST'
+            };
+
+            if (options.isText) {
+                // Text-to-Speech call using Telnyx answering machine detection
+                callData.answering_machine_detection = 'premium';
+                callData.answering_machine_detection_config = {
+                    total_analysis_time_millis: 4000,
+                    after_greeting_silence_millis: 800,
+                    greeting_duration_millis: 3500,
+                    initial_silence_millis: 3500,
+                    maximum_number_of_words: 5,
+                    silence_threshold: 256
+                };
+                
+                // Store TTS content for webhook processing
+                callData.custom_headers = [{
+                    name: 'X-TTS-Text',
+                    value: Buffer.from(audioContent).toString('base64')
+                }, {
+                    name: 'X-Voice-Type',
+                    value: options.voice || 'alice'
+                }];
+            } else {
+                // Audio file call
+                callData.custom_headers = [{
+                    name: 'X-Audio-URL',
+                    value: audioContent
+                }];
+            }
+
+            // Add transfer logic if specified
+            if (options.transferTo && options.dtmfDigit) {
+                callData.custom_headers.push({
+                    name: 'X-Transfer-To',
+                    value: options.transferTo
+                }, {
+                    name: 'X-DTMF-Digit',
+                    value: options.dtmfDigit
+                });
+            }
+
+            const response = await axios.post(
+                `${this.baseUrl}/calls`,
+                callData,
+                {
+                    headers: {
+                        'Authorization': `Bearer ${this.apiKey}`,
+                        'Content-Type': 'application/json'
+                    },
+                    timeout: 10000
+                }
+            );
+
+            const callId = response.data.data.call_control_id;
+            
+            this.activeCalls.set(callId, {
+                to,
+                from,
+                status: 'INITIATED',
+                startTime: new Date(),
+                audioContent,
+                options
+            });
+
+            logger.info({ callId, to }, 'Telnyx call initiated successfully');
+
+            return {
+                success: true,
+                callId,
+                status: 'INITIATED',
+                tracking: {
+                    bulkId: callId,
+                    messageId: callId,
+                    to,
+                    from,
+                    timestamp: new Date().toISOString()
+                }
+            };
+
+        } catch (error) {
+            logger.error({ error: error.message }, 'Telnyx call failed');
+            throw new Error(`Telnyx call failed: ${error.message}`);
+        }
+    }
+
+    async answerCall(callControlId) {
+        try {
+            const response = await axios.post(
+                `${this.baseUrl}/calls/${callControlId}/actions/answer`,
+                {},
+                {
+                    headers: {
+                        'Authorization': `Bearer ${this.apiKey}`,
+                        'Content-Type': 'application/json'
+                    },
+                    timeout: 5000
+                }
+            );
+
+            return response.data;
+        } catch (error) {
+            logger.error({ error: error.message }, 'Failed to answer Telnyx call');
+            throw error;
+        }
+    }
+
+    async speakText(callControlId, text, voice = 'alice') {
+        try {
+            const response = await axios.post(
+                `${this.baseUrl}/calls/${callControlId}/actions/speak`,
+                {
+                    payload: text,
+                    voice: voice,
+                    language: 'en-US'
+                },
+                {
+                    headers: {
+                        'Authorization': `Bearer ${this.apiKey}`,
+                        'Content-Type': 'application/json'
+                    },
+                    timeout: 5000
+                }
+            );
+
+            return response.data;
+        } catch (error) {
+            logger.error({ error: error.message }, 'Failed to speak text in Telnyx call');
+            throw error;
+        }
+    }
+
+    async playAudio(callControlId, audioUrl) {
+        try {
+            const response = await axios.post(
+                `${this.baseUrl}/calls/${callControlId}/actions/playback_start`,
+                {
+                    audio_url: audioUrl
+                },
+                {
+                    headers: {
+                        'Authorization': `Bearer ${this.apiKey}`,
+                        'Content-Type': 'application/json'
+                    },
+                    timeout: 5000
+                }
+            );
+
+            return response.data;
+        } catch (error) {
+            logger.error({ error: error.message }, 'Failed to play audio in Telnyx call');
+            throw error;
+        }
+    }
+
+    async hangupCall(callControlId) {
+        try {
+            const response = await axios.post(
+                `${this.baseUrl}/calls/${callControlId}/actions/hangup`,
+                {},
+                {
+                    headers: {
+                        'Authorization': `Bearer ${this.apiKey}`,
+                        'Content-Type': 'application/json'
+                    },
+                    timeout: 5000
+                }
+            );
+
+            return response.data;
+        } catch (error) {
+            logger.error({ error: error.message }, 'Failed to hangup Telnyx call');
+            throw error;
+        }
+    }
+
+    async getCallStatus(callControlId) {
+        try {
+            const response = await axios.get(
+                `${this.baseUrl}/calls/${callControlId}`,
+                {
+                    headers: {
+                        'Authorization': `Bearer ${this.apiKey}`
+                    },
+                    timeout: 5000
+                }
+            );
+
+            return {
+                callId: callControlId,
+                status: response.data.data.call_session_id ? 'ACTIVE' : 'COMPLETED',
+                duration: response.data.data.duration,
+                startTime: response.data.data.start_time,
+                endTime: response.data.data.end_time,
+                direction: response.data.data.direction
+            };
+
+        } catch (error) {
+            return { error: 'Call not found or error retrieving status' };
+        }
+    }
+}
+
+class EnableXClient {
+    constructor() {
+        this.appId = process.env.ENABLEX_APP_ID;
+        this.appKey = process.env.ENABLEX_APP_KEY;
+        this.baseUrl = 'https://api.enablex.io/voice/v1';
+        this.activeCalls = new Map();
+    }
+
+    generateToken() {
+        const crypto = require('crypto');
+        const timestamp = Math.floor(Date.now() / 1000);
+        const randomString = crypto.randomBytes(16).toString('hex');
+        
+        // Create signature for EnableX authentication
+        const stringToSign = `${this.appId}:${timestamp}:${randomString}`;
+        const signature = crypto.createHmac('sha256', this.appKey)
+            .update(stringToSign)
+            .digest('hex');
+        
+        return Buffer.from(`${this.appId}:${timestamp}:${randomString}:${signature}`).toString('base64');
+    }
+
+    async makeCall(to, from, audioContent, options = {}) {
+        try {
+            logger.info({ to, from, provider: 'EnableX' }, 'Initiating EnableX call');
+
+            const token = this.generateToken();
+            
+            let callData = {
+                to: [{
+                    type: 'pstn',
+                    number: to
+                }],
+                from: from,
+                event_url: process.env.ENABLEX_WEBHOOK_URL || 'https://your-app.com/webhook/enablex',
+                answer_url: process.env.ENABLEX_ANSWER_URL || 'https://your-app.com/answer/enablex'
+            };
+
+            if (options.isText) {
+                // Text-to-Speech call using EnableX NCCO
+                const ncco = [
+                    {
+                        action: 'talk',
+                        text: audioContent,
+                        voice_name: options.voice || 'Amy',
+                        language: options.language || 'en-US',
+                        style: options.style || 0
+                    }
+                ];
+                
+                // Add transfer logic if specified
+                if (options.transferTo && options.dtmfDigit) {
+                    ncco.push({
+                        action: 'input',
+                        type: ['dtmf'],
+                        dtmf: {
+                            max_digits: 1,
+                            timeout_ms: 5000
+                        },
+                        event_url: [`${process.env.ENABLEX_WEBHOOK_URL}/dtmf`]
+                    });
+                    ncco.push({
+                        action: 'connect',
+                        endpoint: [{
+                            type: 'phone',
+                            number: options.transferTo
+                        }]
+                    });
+                }
+                
+                callData.ncco = ncco;
+            } else {
+                // Audio file call
+                const ncco = [
+                    {
+                        action: 'stream',
+                        stream_url: [audioContent],
+                        level: options.volume || 0,
+                        bargeIn: options.bargeIn || false
+                    }
+                ];
+                
+                callData.ncco = ncco;
+            }
+
+            const response = await axios.post(
+                `${this.baseUrl}/calls`,
+                callData,
+                {
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    },
+                    timeout: 10000
+                }
+            );
+
+            const callId = response.data.uuid || response.data.call_uuid;
+            
+            this.activeCalls.set(callId, {
+                to,
+                from,
+                status: 'INITIATED',
+                startTime: new Date(),
+                audioContent,
+                options
+            });
+
+            logger.info({ callId, to }, 'EnableX call initiated successfully');
+
+            return {
+                success: true,
+                callId,
+                status: 'INITIATED',
+                tracking: {
+                    bulkId: callId,
+                    messageId: callId,
+                    to,
+                    from,
+                    timestamp: new Date().toISOString()
+                }
+            };
+
+        } catch (error) {
+            logger.error({ error: error.message }, 'EnableX call failed');
+            throw new Error(`EnableX call failed: ${error.message}`);
+        }
+    }
+
+    async modifyCall(callId, action, params = {}) {
+        try {
+            const token = this.generateToken();
+            
+            const response = await axios.put(
+                `${this.baseUrl}/calls/${callId}`,
+                {
+                    action: action,
+                    ...params
+                },
+                {
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    },
+                    timeout: 5000
+                }
+            );
+
+            return response.data;
+        } catch (error) {
+            logger.error({ error: error.message }, 'Failed to modify EnableX call');
+            throw error;
+        }
+    }
+
+    async hangupCall(callId) {
+        try {
+            const token = this.generateToken();
+            
+            const response = await axios.delete(
+                `${this.baseUrl}/calls/${callId}`,
+                {
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    },
+                    timeout: 5000
+                }
+            );
+
+            return response.data;
+        } catch (error) {
+            logger.error({ error: error.message }, 'Failed to hangup EnableX call');
+            throw error;
+        }
+    }
+
+    async getCallStatus(callId) {
+        try {
+            const token = this.generateToken();
+            
+            const response = await axios.get(
+                `${this.baseUrl}/calls/${callId}`,
+                {
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    },
+                    timeout: 5000
+                }
+            );
+
+            return {
+                callId,
+                status: response.data.status,
+                duration: response.data.duration,
+                startTime: response.data.start_time,
+                endTime: response.data.end_time,
+                direction: response.data.direction,
+                price: response.data.price
+            };
+
+        } catch (error) {
+            return { error: 'Call not found or error retrieving status' };
+        }
+    }
+
+    async getCallRecording(callId) {
+        try {
+            const token = this.generateToken();
+            
+            const response = await axios.get(
+                `${this.baseUrl}/calls/${callId}/recordings`,
+                {
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    },
+                    timeout: 5000
+                }
+            );
+
+            return response.data;
+        } catch (error) {
+            logger.error({ error: error.message }, 'Failed to get EnableX call recording');
+            return { error: 'Recording not found' };
+        }
+    }
+}
+
 class AWSConnectClient {
     constructor() {
         this.accessKeyId = process.env.AWS_ACCESS_KEY_ID;
@@ -1312,6 +2065,18 @@ if (useVoIP) {
     } else if (voipProvider === 'wavix') {
         voipClient = new WavixClient();
         logger.info('Wavix VoIP client initialized');
+    } else if (voipProvider === 'plivo') {
+        voipClient = new PlivoClient();
+        logger.info('Plivo VoIP client initialized');
+    } else if (voipProvider === 'sinch') {
+        voipClient = new SinchClient();
+        logger.info('Sinch VoIP client initialized');
+    } else if (voipProvider === 'telnyx') {
+        voipClient = new TelnyxClient();
+        logger.info('Telnyx VoIP client initialized');
+    } else if (voipProvider === 'enablex') {
+        voipClient = new EnableXClient();
+        logger.info('EnableX VoIP client initialized');
     }
 } else if (useSip) {
     sipClient = new SIPClient();

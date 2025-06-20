@@ -7,7 +7,7 @@ High-performance Text-to-Speech Voice API Server with **SIP routing** and Infobi
 ## 🚀 Features
 
 ### 🌟 **Multi-Provider Routing**
-- **📞 VoIP Services**: Twilio, Vonage, AWS Connect, Wavix
+- **📞 VoIP Services**: Twilio, Vonage, AWS Connect, Wavix, Plivo, Sinch, Telnyx, EnableX
 - **🎯 SIP Routing**: Direct connection to SIP trunks and VoIP providers
 - **☁️ Infobip Routing**: Cloud-based API routing (fallback)
 - **🔄 Hybrid Mode**: Automatic failover between providers
@@ -43,7 +43,13 @@ DEFAULT_CALLER_ID=+1234567890
 
 ### VoIP Provider Configuration (Choose One)
 ```env
-# Wavix (Recommended)
+# Plivo (Recommended - Cost Effective)
+USE_VOIP=true
+VOIP_PROVIDER=plivo
+PLIVO_AUTH_ID=your_plivo_auth_id
+PLIVO_AUTH_TOKEN=your_plivo_auth_token
+
+# Wavix
 USE_VOIP=true
 VOIP_PROVIDER=wavix
 WAVIX_API_KEY=your_wavix_api_key
@@ -53,6 +59,39 @@ USE_VOIP=true
 VOIP_PROVIDER=twilio
 TWILIO_ACCOUNT_SID=your_account_sid
 TWILIO_AUTH_TOKEN=your_auth_token
+
+# Vonage
+USE_VOIP=true
+VOIP_PROVIDER=vonage
+VONAGE_API_KEY=your_api_key
+VONAGE_API_SECRET=your_api_secret
+
+# AWS Connect
+USE_VOIP=true
+VOIP_PROVIDER=aws
+AWS_ACCESS_KEY_ID=your_access_key
+AWS_SECRET_ACCESS_KEY=your_secret_key
+AWS_CONNECT_INSTANCE_ID=your_instance_id
+
+# Sinch (Enterprise Grade)
+USE_VOIP=true
+VOIP_PROVIDER=sinch
+SINCH_APPLICATION_KEY=your_application_key
+SINCH_APPLICATION_SECRET=your_application_secret
+
+# Telnyx (Real-time Communications)
+USE_VOIP=true
+VOIP_PROVIDER=telnyx
+TELNYX_API_KEY=your_api_key
+TELNYX_CONNECTION_ID=your_connection_id
+TELNYX_WEBHOOK_URL=https://your-app.com/webhook/telnyx
+
+# EnableX (NCCO-Based)
+USE_VOIP=true
+VOIP_PROVIDER=enablex
+ENABLEX_APP_ID=your_app_id
+ENABLEX_APP_KEY=your_app_key
+ENABLEX_WEBHOOK_URL=https://your-app.com/webhook/enablex
 
 # SIP Direct
 USE_SIP=true
